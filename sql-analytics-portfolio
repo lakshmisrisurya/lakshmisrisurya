@@ -1,1 +1,332 @@
+# SQL Analytics Portfolio
+### Lakshmi Surya — Lead Data Analyst
+
+> Advanced SQL showcasing window functions, CTEs, and business-focused analysis across SaaS, Retail, and Finance domains.
+
+---
+
+## 📁 Repository Structure
+
+```
+sql-analytics-portfolio/
+├── saas/
+│   ├── 01_arr_mrr_calculations.sql
+│   ├── 02_churn_analysis.sql
+│   ├── 03_cohort_retention.sql
+│   └── 04_customer_health_scoring.sql
+├── retail/
+│   ├── 05_sales_performance.sql
+│   ├── 06_inventory_analysis.sql
+│   └── 07_customer_segmentation.sql
+├── finance/
+│   ├── 08_budget_vs_actuals.sql
+│   └── 09_revenue_waterfall.sql
+└── README.md
+```
+
+---
+
+## 🔍 Query Highlights
+
+---
+
+### 01 — SaaS ARR & MRR Calculations
+```sql
+-- Monthly Recurring Revenue with MoM growth
+WITH monthly_mrr AS (
+    SELECT
+        DATE_TRUNC('month', subscription_date)     AS month,
+        SUM(annual_contract_value / 12)            AS mrr,
+        COUNT(DISTINCT customer_id)                AS active_customers
+    FROM subscriptions
+    WHERE status = 'active'
+    GROUP BY 1
+),
+mrr_with_growth AS (
+    SELECT
+        month,
+        mrr,
+        active_customers,
+        LAG(mrr) OVER (ORDER BY month)             AS prev_mrr,
+        ROUND(
+            (mrr - LAG(mrr) OVER (ORDER BY month))
+            / NULLIF(LAG(mrr) OVER (ORDER BY month), 0) * 100, 2
+        )                                          AS mom_growth_pct
+    FROM monthly_mrr
+)
+SELECT
+    month,
+    ROUND(mrr, 2)                                  AS mrr,
+    ROUND(mrr * 12, 2)                             AS arr_run_rate,
+    active_customers,
+    mom_growth_pct,
+    SUM(mrr) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)
+                                                   AS rolling_3mo_mrr
+FROM mrr_with_growth
+ORDER BY month;
+```
+
+---
+
+### 02 — Churn Analysis with Cohorts
+```sql
+-- Customer churn rate by acquisition cohort
+WITH cohort_base AS (
+    SELECT
+        customer_id,
+        DATE_TRUNC('month', first_subscription_date) AS cohort_month
+    FROM customers
+),
+monthly_activity AS (
+    SELECT
+        customer_id,
+        DATE_TRUNC('month', activity_date)           AS activity_month
+    FROM customer_activity
+),
+cohort_retention AS (
+    SELECT
+        c.cohort_month,
+        a.activity_month,
+        DATEDIFF('month', c.cohort_month, a.activity_month) AS months_since_start,
+        COUNT(DISTINCT c.customer_id)                AS customers
+    FROM cohort_base c
+    LEFT JOIN monthly_activity a USING (customer_id)
+    GROUP BY 1, 2, 3
+),
+cohort_size AS (
+    SELECT cohort_month, COUNT(DISTINCT customer_id) AS cohort_customers
+    FROM cohort_base
+    GROUP BY 1
+)
+SELECT
+    r.cohort_month,
+    r.months_since_start,
+    r.customers,
+    s.cohort_customers,
+    ROUND(r.customers * 100.0 / s.cohort_customers, 2) AS retention_rate,
+    ROUND(100 - r.customers * 100.0 / s.cohort_customers, 2) AS churn_rate
+FROM cohort_retention r
+JOIN cohort_size s USING (cohort_month)
+WHERE months_since_start >= 0
+ORDER BY cohort_month, months_since_start;
+```
+
+---
+
+### 03 — Net Revenue Retention (NRR)
+```sql
+-- NRR: measures expansion, contraction, and churn vs prior period
+WITH period_revenue AS (
+    SELECT
+        customer_id,
+        DATE_TRUNC('month', month)                  AS month,
+        SUM(mrr)                                    AS current_mrr
+    FROM subscriptions
+    GROUP BY 1, 2
+),
+revenue_comparison AS (
+    SELECT
+        curr.month,
+        curr.customer_id,
+        curr.current_mrr,
+        COALESCE(prev.current_mrr, 0)               AS prior_mrr,
+        CASE
+            WHEN prev.current_mrr IS NULL            THEN 'new'
+            WHEN curr.current_mrr > prev.current_mrr THEN 'expansion'
+            WHEN curr.current_mrr < prev.current_mrr THEN 'contraction'
+            WHEN curr.current_mrr = 0                THEN 'churned'
+            ELSE 'retained'
+        END                                         AS revenue_type
+    FROM period_revenue curr
+    LEFT JOIN period_revenue prev
+        ON curr.customer_id = prev.customer_id
+        AND curr.month = DATEADD('month', 1, prev.month)
+)
+SELECT
+    month,
+    SUM(CASE WHEN revenue_type = 'retained'    THEN current_mrr ELSE 0 END) AS retained_mrr,
+    SUM(CASE WHEN revenue_type = 'expansion'   THEN current_mrr ELSE 0 END) AS expansion_mrr,
+    SUM(CASE WHEN revenue_type = 'contraction' THEN prior_mrr - current_mrr ELSE 0 END) AS contraction_mrr,
+    SUM(CASE WHEN revenue_type = 'churned'     THEN prior_mrr ELSE 0 END)   AS churned_mrr,
+    ROUND(
+        SUM(CASE WHEN revenue_type IN ('retained','expansion','contraction') THEN current_mrr ELSE 0 END)
+        / NULLIF(SUM(prior_mrr), 0) * 100, 2
+    )                                                                        AS nrr_pct
+FROM revenue_comparison
+GROUP BY month
+ORDER BY month;
+```
+
+---
+
+### 04 — Retail Sales Performance with Rankings
+```sql
+-- Store and product performance with rankings and running totals
+WITH daily_sales AS (
+    SELECT
+        store_id,
+        product_id,
+        product_category,
+        sale_date,
+        SUM(quantity)                               AS units_sold,
+        SUM(revenue)                                AS daily_revenue
+    FROM sales_transactions
+    WHERE sale_date >= DATEADD('month', -3, CURRENT_DATE)
+    GROUP BY 1, 2, 3, 4
+),
+product_totals AS (
+    SELECT
+        product_id,
+        product_category,
+        SUM(units_sold)                             AS total_units,
+        SUM(daily_revenue)                          AS total_revenue,
+        AVG(daily_revenue)                          AS avg_daily_revenue,
+        COUNT(DISTINCT sale_date)                   AS selling_days
+    FROM daily_sales
+    GROUP BY 1, 2
+)
+SELECT
+    product_id,
+    product_category,
+    total_units,
+    ROUND(total_revenue, 2)                         AS total_revenue,
+    ROUND(avg_daily_revenue, 2)                     AS avg_daily_revenue,
+    RANK() OVER (PARTITION BY product_category
+                 ORDER BY total_revenue DESC)       AS rank_in_category,
+    RANK() OVER (ORDER BY total_revenue DESC)       AS overall_rank,
+    ROUND(
+        SUM(total_revenue) OVER (PARTITION BY product_category
+                                 ORDER BY total_revenue DESC)
+        / SUM(total_revenue) OVER (PARTITION BY product_category) * 100
+    , 2)                                            AS cumulative_category_pct,
+    NTILE(4) OVER (ORDER BY total_revenue DESC)     AS revenue_quartile
+FROM product_totals
+ORDER BY overall_rank;
+```
+
+---
+
+### 05 — Budget vs Actuals Variance Analysis
+```sql
+-- Finance: budget vs actuals with variance flags
+WITH actuals AS (
+    SELECT
+        department,
+        cost_center,
+        gl_account,
+        DATE_TRUNC('month', transaction_date)       AS month,
+        SUM(amount)                                 AS actual_spend
+    FROM general_ledger
+    WHERE fiscal_year = 2024
+    GROUP BY 1, 2, 3, 4
+),
+budget AS (
+    SELECT
+        department,
+        cost_center,
+        gl_account,
+        budget_month                                AS month,
+        budget_amount
+    FROM annual_budget
+    WHERE fiscal_year = 2024
+),
+variance AS (
+    SELECT
+        COALESCE(a.department, b.department)        AS department,
+        COALESCE(a.cost_center, b.cost_center)      AS cost_center,
+        COALESCE(a.gl_account, b.gl_account)        AS gl_account,
+        COALESCE(a.month, b.month)                  AS month,
+        COALESCE(b.budget_amount, 0)                AS budget,
+        COALESCE(a.actual_spend, 0)                 AS actuals,
+        COALESCE(a.actual_spend, 0)
+            - COALESCE(b.budget_amount, 0)          AS variance_amt,
+        ROUND(
+            (COALESCE(a.actual_spend, 0)
+            - COALESCE(b.budget_amount, 0))
+            / NULLIF(b.budget_amount, 0) * 100, 2
+        )                                           AS variance_pct
+    FROM actuals a
+    FULL OUTER JOIN budget b
+        USING (department, cost_center, gl_account, month)
+)
+SELECT
+    *,
+    CASE
+        WHEN variance_pct > 10  THEN '🔴 Over Budget'
+        WHEN variance_pct > 5   THEN '🟡 Watch'
+        WHEN variance_pct < -10 THEN '🟢 Under Budget'
+        ELSE                         '✅ On Track'
+    END                                             AS budget_status,
+    SUM(actuals) OVER (
+        PARTITION BY department
+        ORDER BY month
+    )                                               AS ytd_actuals,
+    SUM(budget) OVER (
+        PARTITION BY department
+        ORDER BY month
+    )                                               AS ytd_budget
+FROM variance
+ORDER BY department, month;
+```
+
+---
+
+### 06 — Customer Segmentation (RFM Analysis)
+```sql
+-- RFM: Recency, Frequency, Monetary segmentation
+WITH rfm_base AS (
+    SELECT
+        customer_id,
+        DATEDIFF('day', MAX(order_date), CURRENT_DATE) AS recency_days,
+        COUNT(DISTINCT order_id)                        AS frequency,
+        SUM(order_value)                                AS monetary
+    FROM orders
+    WHERE order_date >= DATEADD('year', -1, CURRENT_DATE)
+    GROUP BY 1
+),
+rfm_scores AS (
+    SELECT
+        customer_id,
+        recency_days,
+        frequency,
+        monetary,
+        NTILE(5) OVER (ORDER BY recency_days ASC)   AS r_score,
+        NTILE(5) OVER (ORDER BY frequency DESC)     AS f_score,
+        NTILE(5) OVER (ORDER BY monetary DESC)      AS m_score
+    FROM rfm_base
+),
+rfm_segments AS (
+    SELECT
+        *,
+        CONCAT(r_score, f_score, m_score)           AS rfm_cell,
+        ROUND((r_score + f_score + m_score) / 3.0, 2) AS rfm_avg
+    FROM rfm_scores
+)
+SELECT
+    customer_id,
+    recency_days,
+    frequency,
+    ROUND(monetary, 2)                              AS monetary,
+    rfm_cell,
+    rfm_avg,
+    CASE
+        WHEN rfm_avg >= 4.5                         THEN 'Champions'
+        WHEN rfm_avg >= 4.0                         THEN 'Loyal Customers'
+        WHEN rfm_avg >= 3.0 AND r_score >= 3        THEN 'Potential Loyalists'
+        WHEN r_score >= 4   AND f_score <= 2        THEN 'New Customers'
+        WHEN rfm_avg >= 3.0 AND r_score <= 2        THEN 'At Risk'
+        WHEN r_score <= 2   AND rfm_avg >= 3.0      THEN 'Cannot Lose Them'
+        ELSE                                             'Hibernating'
+    END                                             AS customer_segment
+FROM rfm_segments
+ORDER BY rfm_avg DESC;
+```
+
+---
+
+## 🧰 Tools Used
+`Snowflake SQL` `PostgreSQL` `dbt` `Window Functions` `CTEs` `Cohort Analysis` `RFM`
+
+## 📬 Contact
+**Lakshmi Surya** · lakshmibicog@gmail.com · [Portfolio](https://lakshmisrisurya.github.io)
 
