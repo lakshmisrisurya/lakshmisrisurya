@@ -35,6 +35,7 @@ Results-driven analytics leader with **12+ years** of experience building scalab
 
 | Repository | Description | Tools |
 |---|---|---|
+| [data-analytics-portfolio](https://github.com/lakshmisrisurya/data-analytics-portfolio) | Business and technical problems I solve in real-world environments | SQL · Snowflake · dbt |
 | [saas-metrics-dashboard](https://github.com/lakshmisrisurya/saas-metrics-dashboards) | ARR, MRR, NRR, CAC, LTV KPI framework | SQL · Snowflake · Power BI |
 | [sql-analytics-portfolio](https://github.com/lakshmisrisurya/sql-analytics-portfolio) | Advanced SQL — window functions, CTEs, business analysis | SQL · Snowflake |
 | [dbt-data-models](https://github.com/lakshmisrisurya/dbt-data-models) | Production-grade dbt project with staging & mart layers | dbt · Snowflake |
