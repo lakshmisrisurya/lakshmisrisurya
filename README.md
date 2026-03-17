@@ -1,7 +1,7 @@
 # Hi, I'm Lakshmi Surya 👋
 
 ### Lead Data Analyst · Analytics Engineer · Analytics Lead
-📍 Charlotte, NC &nbsp;|&nbsp; 📧 lakshmibicog@gmail.com &nbsp;|&nbsp; 🌐 [Portfolio](https://lakshmisrisurya.github.io)
+📍 Charlotte, NC &nbsp;|&nbsp; 📧 lakshmibicog@gmail.com &nbsp;|&nbsp; 🌐 [Portfolio](https://lakshmisrisurya.github.io/lakshmisurya.github.io/)
 
 ---
 
